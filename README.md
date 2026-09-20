@@ -288,3 +288,5 @@ tests/            unit-level and end-to-end integration tests
 ## License
 
 AGPL-3.0-only (same as the qeli core) — see [LICENSE](LICENSE).
+
+> Binaries for every release: see the [Releases](https://github.com/MrKsey/qeli-ss-plugin/releases) page.

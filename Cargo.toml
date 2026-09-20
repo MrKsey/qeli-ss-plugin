@@ -1,6 +1,6 @@
 [package]
 name = "qeli-ss-plugin"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "SIP003 plugin for shadowsocks: one long-lived qeli fake-tls tunnel with stream multiplexing, post-quantum handshake and dead-peer detection"
 license = "AGPL-3.0-only"

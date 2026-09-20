@@ -251,9 +251,11 @@ QELI_SS_PLUGIN_VERSION=v1.2.3 cargo build --release
 cargo build --release          # native
 cargo test                     # 67 tests: unit + end-to-end over real TCP
 
-# Linux binaries from any host (via cargo-zigbuild):
-cargo zigbuild --release --target x86_64-unknown-linux-gnu
-cargo zigbuild --release --target aarch64-unknown-linux-gnu
+# Linux binaries from any host (via cargo-zigbuild): STATIC musl builds —
+# no libc interpreter, run on any distro/embedded system (OpenWrt, Entware,
+# routers, Alpine) regardless of the host libc:
+cargo zigbuild --release --target x86_64-unknown-linux-musl
+cargo zigbuild --release --target aarch64-unknown-linux-musl
 ```
 
 The `qeli` core is pulled as a pinned git dependency; see `Cargo.toml` for a

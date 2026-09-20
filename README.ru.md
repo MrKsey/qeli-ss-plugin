@@ -251,9 +251,11 @@ QELI_SS_PLUGIN_VERSION=v1.2.3 cargo build --release
 cargo build --release          # нативная
 cargo test                     # 67 тестов: юнит + end-to-end по реальному TCP
 
-# Linux-бинари с любого хоста (через cargo-zigbuild):
-cargo zigbuild --release --target x86_64-unknown-linux-gnu
-cargo zigbuild --release --target aarch64-unknown-linux-gnu
+# Linux-бинари с любого хоста (через cargo-zigbuild): СТАТИЧЕСКИЕ musl-сборки —
+# без libc-интерпретатора, работают на любом дистрибутиве/Embedded-системе
+# (OpenWrt, Entware, роутеры, Alpine) независимо от хостевого libc:
+cargo zigbuild --release --target x86_64-unknown-linux-musl
+cargo zigbuild --release --target aarch64-unknown-linux-musl
 ```
 
 Ядро `qeli` подтягивается git-зависимостью с запиненной ревизией; в

@@ -42,14 +42,14 @@ The plugin encrypts everything on the wire itself. Only the two loopback
 legs are ever plaintext (by SIP003 definition they are local):
 
 ```text
-app ─(plaintext, loopback)─ ss-local ─(plaintext, loopback)─ plugin client
-                                                                ║
-          everything past this point is the qeli fake-TLS tunnel ║
-          ║  handshake: X25519 + ML-KEM-768                       ║
-          ║  records:   ChaCha20-Poly1305 AEAD + anti-replay      ║
-          ║  payload:   multiplexer frames inside the records     ║
-                                                                ║
-                                                     plugin server ─(plaintext, loopback)─ ss-server → internet
+app ── ss-local ── plugin client
+                    │
+                    │  qeli fake-TLS tunnel (everything here is encrypted):
+                    │    • handshake: X25519 + ML-KEM-768
+                    │    • records:   ChaCha20-Poly1305 AEAD + anti-replay
+                    │    • payload:   mux frames inside the records
+                    ▼
+                plugin server ── ss-server ──> internet
 ```
 
 * **Handshake** (`src/handshake.rs`) — a real-looking TLS 1.3 flight
@@ -198,15 +198,6 @@ Every address in every config accepts both families:
 * **SIP003 environment** — `SS_LOCAL_HOST`/`SS_REMOTE_HOST` accept IPv4,
   bracketed and bare IPv6 hosts.
 * Hostnames resolve via the system resolver (A + AAAA).
-
-## Version
-
-```sh
-qeli-ss-plugin -v        # prints the version, e.g. v1.0.2
-```
-
-Release builds take the version from the release tag
-(`QELI_SS_PLUGIN_VERSION` at build time); local builds default to `0.1`.
 
 ## Command-line flags
 

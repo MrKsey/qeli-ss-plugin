@@ -111,7 +111,9 @@ async fn handle_conn(
             }
         };
 
-    let tunnel = carrier::spawn_tunnel(io, auth.rx, auth.tx, cfg.ping_secs, on_open).await;
+    let peer = io.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+    let tunnel =
+        carrier::spawn_tunnel(io, auth.rx, auth.tx, cfg.ping_secs, &peer, on_open).await;
     let mut live = tunnels.lock().unwrap();
     live.retain(|t| !t.is_dead());
     live.push(tunnel);

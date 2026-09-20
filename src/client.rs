@@ -110,7 +110,16 @@ impl TunnelManager {
             cfg.remote,
             crate::opts::to_hex(&auth.server_static)
         );
-        Ok(carrier::spawn_tunnel(io, auth.rx, auth.tx, cfg.ping_secs, on_open).await)
+        let peer = cfg.remote.to_string();
+        Ok(carrier::spawn_tunnel(
+            io,
+            auth.rx,
+            auth.tx,
+            cfg.ping_secs,
+            &peer,
+            on_open,
+        )
+        .await)
     }
 
     /// Serve one accepted `ss-local` connection as one mux stream.

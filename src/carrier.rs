@@ -115,7 +115,11 @@ impl StreamRegistry {
     /// Remove a stream (peer CLOSE or local teardown). Dropping the sender
     /// closes the pump's inbound channel → the pump finishes its local socket.
     pub async fn remove(&self, id: u32) -> Option<mpsc::Sender<Vec<u8>>> {
-        self.streams.lock().await.remove(&id)
+        let removed = self.streams.lock().await.remove(&id);
+        if removed.is_some() {
+            log::debug!("stream {id} closed");
+        }
+        removed
     }
 
     /// Close every stream: the death fan-out.
@@ -194,6 +198,25 @@ impl CarrierHandle {
 
 // ── tunnel ──────────────────────────────────────────────────────────────────
 
+/// Why a tunnel died (diagnostics / the disconnect log line).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeathCause {
+    /// The peer closed the connection (clean EOF on the wire).
+    PeerClosed,
+    /// A wire read error (connection reset etc.).
+    ReadError,
+    /// A wire write failed or timed out (WRITE_TIMEOUT).
+    WriteError,
+    /// The AEAD/codec rejected records persistently.
+    WireCorruption,
+    /// A malformed mux frame arrived repeatedly.
+    BadFrame,
+    /// Keepalive: no PONG within the grace period.
+    KeepaliveTimeout,
+    /// Local shutdown (server stop / manual kill).
+    Killed,
+}
+
 /// One live tunnel: the handle, the demux registry and the death flag.
 pub struct Tunnel {
     handle: CarrierHandle,
@@ -201,6 +224,11 @@ pub struct Tunnel {
     dead_tx: watch::Sender<bool>,
     /// PONG frames received (keepalive diagnostics / tests).
     pongs: AtomicU64,
+    /// Why the tunnel died; set once, at the first kill.
+    cause: std::sync::Mutex<Option<DeathCause>>,
+    /// Remote peer address ("" when unknown — duplex tests): shown in the
+    /// tunnel-down log line.
+    peer: String,
 }
 
 impl Tunnel {
@@ -220,8 +248,36 @@ impl Tunnel {
         self.handle.is_dead()
     }
 
-    /// Force death: mark dead and close every stream. Idempotent.
+    /// Why the tunnel died (None while alive).
+    pub fn death_cause(&self) -> Option<DeathCause> {
+        *self.cause.lock().unwrap()
+    }
+
+    /// The remote peer address ("" when unknown).
+    pub fn peer(&self) -> &str {
+        &self.peer
+    }
+
+    /// Force death: mark dead, remember the cause and close every stream.
+    /// Idempotent — the first cause wins.
+    pub async fn kill_with(&self, cause: DeathCause) {
+        {
+            let mut slot = self.cause.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(cause);
+            }
+        }
+        self.kill().await;
+    }
+
+    /// Force death with an unknown cause. Idempotent.
     pub async fn kill(&self) {
+        {
+            let mut slot = self.cause.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(DeathCause::Killed);
+            }
+        }
         let _ = self.dead_tx.send(true);
         self.registry.close_all().await;
     }
@@ -232,6 +288,7 @@ impl Tunnel {
 /// * `rx` / `tx` — the matched `PacketCodec` pair from the handshake
 ///   (`rx` decrypts peer→us records, `tx` encrypts ours).
 /// * `ping_secs` — keepalive interval in seconds; `0` disables keepalive.
+/// * `peer` — the remote peer address (shown in the tunnel-down log line).
 /// * `on_open` — invoked (spawned) for every OPEN frame the peer sends with
 ///   the stream's registered inbound receiver. The server side connects its
 ///   upstream and pumps; the client side just logs the protocol violation.
@@ -240,6 +297,7 @@ pub async fn spawn_tunnel<S, F, Fut>(
     rx: PacketCodec,
     tx: PacketCodec,
     ping_secs: u32,
+    peer: &str,
     on_open: F,
 ) -> Arc<Tunnel>
 where
@@ -258,6 +316,8 @@ where
         registry: Arc::new(StreamRegistry::new()),
         dead_tx,
         pongs: AtomicU64::new(0),
+        cause: std::sync::Mutex::new(None),
+        peer: peer.to_string(),
     });
 
     let (read_half, write_half) = tokio::io::split(io);
@@ -281,11 +341,15 @@ async fn writer_loop<W>(
     let mut dead = tunnel.dead_tx.subscribe();
     let mut plain = Vec::with_capacity(256);
     let mut record = Vec::with_capacity(4096);
+    let mut cause = DeathCause::WriteError;
     loop {
         // Check the CURRENT flag every iteration: a kill() that completed
         // before this task was first polled is invisible to changed() —
         // subscribe() marks the current value as already seen.
         if *dead.borrow() {
+            // Killed by someone else (reader/keepalive/shutdown) — the cause
+            // is theirs; do not overwrite it.
+            cause = DeathCause::Killed;
             break;
         }
         let frame = tokio::select! {
@@ -295,20 +359,28 @@ async fn writer_loop<W>(
             },
             _ = dead.changed() => {
                 if *dead.borrow() {
+                    cause = DeathCause::Killed;
                     break;
                 }
                 continue;
             }
         };
         frame.encode_into(&mut plain);
-        if codec.encrypt_packet_into(&plain, &[], &mut record).is_err() { break; }
+        if codec.encrypt_packet_into(&plain, &[], &mut record).is_err() {
+            cause = DeathCause::WireCorruption;
+            break;
+        }
         let write = async {
             io.write_all(&record).await?;
             io.flush().await
         };
-        if matches!(timeout(WRITE_TIMEOUT, write).await, Err(_) | Ok(Err(_))) { break; }
+        if matches!(timeout(WRITE_TIMEOUT, write).await, Err(_) | Ok(Err(_))) {
+            cause = DeathCause::WriteError;
+            break;
+        }
     }
-    tunnel.kill().await;
+    log_tunnel_death(&tunnel, "writer", cause).await;
+    tunnel.kill_with(cause).await;
 }
 
 /// Buffered TLS-record extraction: push socket chunks, take complete records.
@@ -408,11 +480,13 @@ async fn reader_loop<R, F, Fut>(
     // streak (corrupted/duplicated records in flight) is tolerated — the
     // records are dropped, the tunnel lives; see MAX_CONSECUTIVE_BAD_RECORDS.
     let mut bad_streak = 0u32;
+    // Why the reader is exiting (diagnostics / the disconnect log line).
+    let mut cause = DeathCause::Killed;
     'tunnel: loop {
         // See writer_loop: a kill before the first poll is invisible to
         // changed(), so check the current flag on every iteration.
         if *dead.borrow() {
-            break;
+            break 'tunnel;
         }
         // Dispatch every complete record already buffered.
         while let Some(record) = records.take_record() {
@@ -425,6 +499,7 @@ async fn reader_loop<R, F, Fut>(
                         log::warn!(
                             "{bad_streak} consecutive bad records — killing the tunnel"
                         );
+                        cause = DeathCause::WireCorruption;
                         break 'tunnel;
                     }
                     continue;
@@ -439,6 +514,7 @@ async fn reader_loop<R, F, Fut>(
                         log::warn!(
                             "{bad_streak} consecutive malformed frames — killing the tunnel"
                         );
+                        cause = DeathCause::BadFrame;
                         break 'tunnel;
                     }
                     continue;
@@ -494,11 +570,38 @@ async fn reader_loop<R, F, Fut>(
             }
         };
         match read {
-            Ok(0) | Err(_) => break 'tunnel,
+            Ok(0) => {
+                cause = DeathCause::PeerClosed;
+                break 'tunnel;
+            }
+            Err(_) => {
+                cause = DeathCause::ReadError;
+                break 'tunnel;
+            }
             Ok(n) => records.push(&chunk[..n]),
         }
     }
-    tunnel.kill().await;
+    log_tunnel_death(&tunnel, "reader", cause).await;
+    tunnel.kill_with(cause).await;
+}
+
+/// One INFO log line per tunnel death, with the cause. Emitted ONCE per
+/// tunnel: only the loop that owns the death cause logs (a later waker sees
+/// the cause already set and stays silent) — a client disconnect is always
+/// visible in the logs, exactly once.
+async fn log_tunnel_death(tunnel: &Tunnel, who: &str, cause: DeathCause) {
+    // Someone already recorded a (first) cause — this is a follow-up wake,
+    // not the death itself. Do not log a duplicate line.
+    if tunnel.death_cause().is_some() {
+        return;
+    }
+    let streams = tunnel.registry().len().await;
+    log::info!(
+        "tunnel down ({who}): peer {} — {:?} — {} stream(s) closed",
+        if tunnel.peer().is_empty() { "?" } else { tunnel.peer() },
+        cause,
+        streams
+    );
 }
 
 /// Periodic liveness probe: send PING, expect a PONG within
@@ -528,7 +631,10 @@ async fn keepalive_loop(tunnel: Arc<Tunnel>, ping_secs: u32) {
                             log::warn!(
                                 "keepalive: no PONG within {KEEPALIVE_GRACE:?} — killing tunnel"
                             );
-                            tunnel.kill().await;
+                            log_tunnel_death(&tunnel, "keepalive", DeathCause::KeepaliveTimeout).await;
+                            tunnel
+                                .kill_with(DeathCause::KeepaliveTimeout)
+                                .await;
                             break;
                         }
                     }
@@ -708,11 +814,11 @@ mod tests {
                 let _ = opened_tx.send((id, inbound)).await;
             }
         };
-        let a = spawn_tunnel(a_io, a_rx, a_tx, ping_secs, |_, id, _| async move {
+        let a = spawn_tunnel(a_io, a_rx, a_tx, ping_secs, "", |_, id, _| async move {
             panic!("client side must never receive OPEN (got {id})");
         })
         .await;
-        let b = spawn_tunnel(b_io, b_rx, b_tx, ping_secs, on_open).await;
+        let b = spawn_tunnel(b_io, b_rx, b_tx, ping_secs, "", on_open).await;
         (a, b, opened_rx)
     }
 
@@ -736,7 +842,7 @@ mod tests {
                 let _ = opened_tx.send((id, inbound)).await;
             }
         };
-        let b = spawn_tunnel(b_io, b_rx, b_tx, ping_secs, on_open).await;
+        let b = spawn_tunnel(b_io, b_rx, b_tx, ping_secs, "", on_open).await;
         (b, opened_rx, raw, a_tx)
     }
 
@@ -1043,7 +1149,7 @@ mod tests {
         // ping (1s) + KEEPALIVE_GRACE (2s) ≈ 3s — hard bound 5s.
         let (raw, a_io) = tokio::io::duplex(64 * 1024);
         let (a_rx, a_tx, _b_rx, _b_tx) = codec_pair();
-        let a = spawn_tunnel(a_io, a_rx, a_tx, 1, |_, id, _| async move {
+        let a = spawn_tunnel(a_io, a_rx, a_tx, 1, "", |_, id, _| async move {
             panic!("no OPEN expected in this test (got {id})");
         })
         .await;

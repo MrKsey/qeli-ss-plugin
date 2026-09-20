@@ -1,0 +1,114 @@
+# Release pipeline:
+#   * push to main          → run the test suite (skipped for README/docs/
+#                             examples-only changes — paths-ignore below);
+#   * push a tag v<version> → build and publish a GitHub release with
+#                             binaries for linux-amd64, linux-arm64 and
+#                             windows-amd64.
+#
+# The plugin version (`-v`) is taken from the tag name via
+# QELI_SS_PLUGIN_VERSION (see src/lib.rs).
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore:
+      - "README.md"
+      - "README.ru.md"
+      - "examples/**"
+      - "**/*.md"
+      - ".gitignore"
+      - "LICENSE"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    # Test suite on main pushes (tag pushes go straight to build/release).
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests
+        run: cargo test --locked
+
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: qeli-ss-plugin-linux-amd64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: qeli-ss-plugin-linux-arm64
+            zigbuild: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: qeli-ss-plugin-windows-amd64.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # arm64 is cross-compiled from the amd64 runner via cargo-zigbuild.
+      - name: Install cargo-zigbuild
+        if: matrix.zigbuild
+        shell: bash
+        run: |
+          pip install ziglang
+          cargo install cargo-zigbuild
+
+      - name: Build
+        shell: bash
+        env:
+          QELI_SS_PLUGIN_VERSION: ${{ github.ref_name }}
+        run: |
+          if [ -n "${{ matrix.zigbuild }}" ]; then
+            cargo zigbuild --release --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --locked --target ${{ matrix.target }}
+          fi
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/qeli-ss-plugin.exe" "${{ matrix.artifact }}"
+          else
+            cp "target/${{ matrix.target }}/release/qeli-ss-plugin" "${{ matrix.artifact }}"
+          fi
+          ls -l "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

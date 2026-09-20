@@ -1,0 +1,13 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Release binaries (attach to GitHub Releases instead)
+/dist
+
+# Local development: a qeli checkout used via a [patch] section
+/qeli-src
+
+# Editor/OS noise
+*.swp
+.DS_Store

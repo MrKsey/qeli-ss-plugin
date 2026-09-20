@@ -1,0 +1,9 @@
+# Normalize text files; keep scripts and workflows strictly LF so they work
+# on Linux runners/servers regardless of the contributor's platform.
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.json text
+*.rs text
+*.toml text
+*.lock text

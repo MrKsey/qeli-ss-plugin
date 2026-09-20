@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "shadowsocks-rust + qeli-ss-plugin: SERVER side config (ssserver --config).",
+    "ssserver listens on loopback only; the plugin listens on the public",
+    "interface (SS_REMOTE_HOST/PORT) and forwards demuxed streams to ssserver",
+    "(SS_LOCAL_HOST/PORT = 127.0.0.1:1310).",
+    "",
+    "plugin_opts — ALL plugin options (server side):",
+    "  s=1                 server role",
+    "  key=<hex64>         the server identity PRIVATE key from",
+    "                      `qeli-ss-plugin --genkey` (keep it secret; clients",
+    "                      pin the matching public key via serverkey=)",
+    "  password=<secret>   the plugin's own auth secret — REQUIRED; ONE",
+    "                      password serves any number of clients from any hosts",
+    "                      (must match the clients; NOT the shadowsocks",
+    "                      `password`)",
+    "  ping=<secs>         keepalive interval (0 = off); dead-peer detection is",
+    "                      bounded by ping + 2s",
+    "  timeout=<secs>      connect/handshake timeout",
+    "",
+    "Note: sni/serverkey are CLIENT-side options (the SNI lives in the",
+    "ClientHello the client sends); the server side does not need them.",
+    "",
+    "Addresses: the plugin's public listener follows what ssserver passes in",
+    "SS_REMOTE_HOST/PORT — IPv4 and IPv6 both work."
+  ],
+  "server": "127.0.0.1",
+  "server_port": 1310,
+  "password": "ss-change-me",
+  "method": "chacha20-ietf-poly1305",
+  "plugin": "qeli-ss-plugin",
+  "plugin_opts": "s=1;key=0000000000000000000000000000000000000000000000000000000000000000;password=change-me;ping=2;timeout=10"
+}

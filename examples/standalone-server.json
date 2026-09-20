@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "qeli-ss-plugin standalone SERVER config (JSON).",
+    "Run:  qeli-ss-plugin --config standalone-server.json",
+    "",
+    "No shadowsocks involved: the plugin listens on \"listen\", authenticates",
+    "tunnels, and forwards every demuxed stream to \"remote\" — ANY TCP service",
+    "(an HTTP server, sshd, a database, or ss-server if you still want it).",
+    "",
+    "Key reference:",
+    "  role      \"client\" or \"server\" (default client)",
+    "  listen    THIS process's listener — the public entry point (required).",
+    "            IPv4: \"0.0.0.0:8443\" (IPv4-only); IPv6 (bracketed):",
+    "            \"[::]:8443\" (dual-stack on Linux by default; on some systems",
+    "            binds IPv6-only — add a second listen via IPv4 if needed)",
+    "  remote    where demuxed streams are forwarded (\"forward\" is an alias)",
+    "            (required). IPv4: \"127.0.0.1:8080\"; IPv6: \"[::1]:8080\"",
+    "  password  auth secret — REQUIRED; ONE password serves any number of",
+    "            clients from any hosts (must match the clients)",
+    "  key       the server identity PRIVATE key from `qeli-ss-plugin --genkey`",
+    "            (keep it secret; clients pin the matching public key via",
+    "            \"serverkey\")",
+    "  ping      keepalive interval, seconds (0 = off); dead-peer detection is",
+    "            bounded by ping + 2s",
+    "  timeout   connect/handshake timeout, seconds",
+    "",
+    "Note: sni/serverkey are CLIENT-side options (the SNI lives in the",
+    "ClientHello the client sends); the server side does not need them.",
+    "",
+    "Unknown keys are a config error (a typo must not be silently ignored)."
+  ],
+
+  "role": "server",
+  "listen": "[::]:8443",
+  "remote": "127.0.0.1:8080",
+
+  "password": "change-me",
+
+  "key": "0000000000000000000000000000000000000000000000000000000000000000",
+
+  "ping": 2,
+  "timeout": 10
+}

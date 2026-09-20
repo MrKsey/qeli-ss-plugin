@@ -1,0 +1,35 @@
+[package]
+name = "qeli-ss-plugin"
+version = "1.0.0"
+edition = "2021"
+description = "SIP003 plugin for shadowsocks: one long-lived qeli fake-tls tunnel with stream multiplexing, post-quantum handshake and dead-peer detection"
+license = "AGPL-3.0-only"
+keywords = ["shadowsocks", "sip003", "proxy", "post-quantum", "tls"]
+categories = ["network-programming"]
+
+# The qeli core (crypto, fake-tls handshake, AEAD records) is reused as a
+# library, pinned to the tested revision.
+# default-features = false keeps the Linux-only server/web stack (and its
+# rustls/ring dependency) out of the build: the plugin is cross-platform
+# client + Linux server.
+# For local development against a qeli checkout:
+#   [patch."https://github.com/litvinovtd/qeli"]
+#   qeli = { path = "../qeli-src/qeli" }
+[dependencies]
+qeli = { git = "https://github.com/litvinovtd/qeli", rev = "f84a78d92e9c144013be67a36b8611bbb1bb8bf7", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "qeli-ss-plugin"
+path = "src/main.rs"
+
+[profile.release]
+lto = "thin"
+strip = true

@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "qeli-ss-plugin standalone CLIENT config (JSON).",
+    "Run:  qeli-ss-plugin --config standalone-client.json",
+    "",
+    "No shadowsocks involved: the plugin listens on \"listen\" and tunnels",
+    "every accepted TCP connection over ONE long-lived qeli fake-tls tunnel",
+    "to the standalone plugin server (see standalone-server.json).",
+    "",
+    "Key reference:",
+    "  role      \"client\" or \"server\" (default client)",
+    "  listen    THIS process's listener — point any TCP client here (required).",
+    "            IPv4: \"127.0.0.1:1080\"; IPv6 (bracketed): \"[::1]:1080\"",
+    "  remote    the standalone plugin server (required).",
+    "            IPv4: \"203.0.113.10:8443\"; IPv6: \"[2001:db8::10]:8443\"",
+    "  password  auth secret — REQUIRED; ONE password serves any number of",
+    "            clients from any hosts (must match the server)",
+    "  sni       the hostname the fake-TLS ClientHello carries — what a passive",
+    "            observer (DPI) sees as the destination of an ordinary HTTPS",
+    "            connection; default www.cloudflare.com; \"\" omits the SNI",
+    "  serverkey the server's static PUBLIC key from `qeli-ss-plugin --genkey`",
+    "            (pinning protects against MITM; remove for trust-on-first-use)",
+    "  ping      keepalive interval, seconds (0 = off); dead-peer detection is",
+    "            bounded by ping + 2s",
+    "  timeout   connect/handshake timeout, seconds",
+    "",
+    "Unknown keys are a config error (a typo must not be silently ignored)."
+  ],
+
+  "role": "client",
+  "listen": "127.0.0.1:1080",
+  "remote": "203.0.113.10:8443",
+
+  "password": "change-me",
+
+  "sni": "www.cloudflare.com",
+  "serverkey": "0000000000000000000000000000000000000000000000000000000000000000",
+
+  "ping": 2,
+  "timeout": 10
+}
